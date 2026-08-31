@@ -21,7 +21,13 @@ optional = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
 
 [features]
 default = ["axum"]
 axum = ["dep:axum"]
+
+[[bench]]
+name = "health_bench"
+harness = false
