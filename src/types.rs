@@ -53,18 +53,22 @@ pub struct CheckResult {
 /// Response body for liveness probes.
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthResponse {
+    /// The overall health status.
     pub status: HealthStatus,
 }
 
 /// Response body for readiness probes.
 #[derive(Debug, Clone, Serialize)]
 pub struct ReadinessResponse {
+    /// The overall readiness status.
     pub status: HealthStatus,
+    /// Results of individual health checks.
     pub checks: Vec<CheckResult>,
 }
 
 /// Response body for liveness probes.
 #[derive(Debug, Clone, Serialize)]
 pub struct LivenessResponse {
+    /// The liveness status.
     pub status: HealthStatus,
 }

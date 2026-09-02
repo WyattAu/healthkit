@@ -1,8 +1,8 @@
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-use axum::routing::{get, MethodRouter};
-use axum::Router;
+use axum::routing::{MethodRouter, get};
 
 use crate::registry::HealthRegistry;
 use crate::types::{HealthResponse, LivenessResponse, ReadinessResponse};

@@ -77,8 +77,9 @@ impl HealthRegistry {
     }
 
     /// Check readiness — returns `Healthy` if all checks pass, `Unhealthy` if any fail.
-    pub async fn check_readiness(&self) -> Result<(HealthStatus, Vec<CheckResult>), HealthCheckError>
-    {
+    pub async fn check_readiness(
+        &self,
+    ) -> Result<(HealthStatus, Vec<CheckResult>), HealthCheckError> {
         let results = self.check_all().await;
         let overall = results
             .iter()

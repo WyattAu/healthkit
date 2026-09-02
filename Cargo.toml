@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/WyattAu/healthkit"
 keywords = ["health", "kubernetes", "docker", "liveness", "readiness"]
 categories = ["web-programming"]
+exclude = ["/target"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -22,6 +23,7 @@ optional = true
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
 
 
 [features]

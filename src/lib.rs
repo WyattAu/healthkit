@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 //! # healthkit
 //!
@@ -46,6 +47,7 @@
 mod error;
 mod types;
 
+/// Axum integration for health check endpoints.
 #[cfg(feature = "axum")]
 pub mod axum;
 
