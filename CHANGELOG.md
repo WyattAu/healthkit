@@ -5,6 +5,13 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 
 ## [Unreleased]
 
+### Fixed
+
+- `HealthRegistry::check_liveness` and `check_readiness` aggregated check
+  results with `min_by_key`, so a single failing check could still report
+  `Healthy`. Aggregation now takes the worst observed status, matching the
+  documented contract ("`Unhealthy` if any fail").
+
 ## [0.1.0] - 2026-08-31
 
 ### Added

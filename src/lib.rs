@@ -191,9 +191,61 @@ mod tests {
         .unwrap();
 
         let (status, results) = registry.check_readiness().await.unwrap();
-        // min_by_key picks best status (Healthy=0 < Degraded=1)
-        assert_eq!(status, HealthStatus::Healthy);
+        // Aggregate takes the worst status (Degraded=1 > Healthy=0)
+        assert_eq!(status, HealthStatus::Degraded);
         assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn registry_check_liveness_mixed_reports_worst_status() {
+        let registry = HealthRegistry::new();
+        let r = registry.clone();
+        tokio::task::spawn_blocking(move || {
+            r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
+            r.add_check("degraded", || async { Ok(HealthStatus::Degraded) });
+            r.add_check("failing", || async {
+                Err(HealthCheckError::DependencyUnavailable("db".to_string()))
+            });
+        })
+        .await
+        .unwrap();
+
+        // Liveness aggregates to the worst observed status.
+        let status = registry.check_liveness().await.unwrap();
+        assert_eq!(status, HealthStatus::Unhealthy);
+    }
+
+    #[tokio::test]
+    async fn registry_check_readiness_failing_reports_unhealthy_with_details() {
+        let registry = HealthRegistry::new();
+        let r = registry.clone();
+        tokio::task::spawn_blocking(move || {
+            r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
+            r.add_check("failing", || async {
+                Err(HealthCheckError::CheckTimedOut(std::time::Duration::from_secs(2)))
+            });
+        })
+        .await
+        .unwrap();
+
+        let (status, results) = registry.check_readiness().await.unwrap();
+        assert_eq!(status, HealthStatus::Unhealthy);
+        let failing = results.iter().find(|r| r.name == "failing").unwrap();
+        assert_eq!(failing.status, HealthStatus::Unhealthy);
+        assert!(failing.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn registry_default_is_empty_and_healthy() {
+        let registry = HealthRegistry::default();
+        assert!(registry.check_all().await.is_empty());
+        assert_eq!(
+            registry.check_liveness().await.unwrap(),
+            HealthStatus::Healthy
+        );
+        let (status, results) = registry.check_readiness().await.unwrap();
+        assert_eq!(status, HealthStatus::Healthy);
+        assert!(results.is_empty());
     }
 
     #[tokio::test]

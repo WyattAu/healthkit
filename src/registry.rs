@@ -66,7 +66,7 @@ impl HealthRegistry {
         let overall = results
             .iter()
             .map(|r| r.status)
-            .min_by_key(|s| match s {
+            .max_by_key(|s| match s {
                 HealthStatus::Healthy => 0,
                 HealthStatus::Degraded => 1,
                 HealthStatus::Unhealthy => 2,
@@ -84,7 +84,7 @@ impl HealthRegistry {
         let overall = results
             .iter()
             .map(|r| r.status)
-            .min_by_key(|s| match s {
+            .max_by_key(|s| match s {
                 HealthStatus::Healthy => 0,
                 HealthStatus::Degraded => 1,
                 HealthStatus::Unhealthy => 2,
