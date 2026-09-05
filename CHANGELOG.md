@@ -3,7 +3,10 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
 
-## [Unreleased]
+## [1.0.0] - 2026-09-05
+
+First stable release. The public API is now covered by the project's
+semver guarantees: breaking changes require a major version bump.
 
 ### Fixed
 
