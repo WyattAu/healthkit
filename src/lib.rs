@@ -13,16 +13,17 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() {
-//! let mut registry = HealthRegistry::new();
+//! let registry = HealthRegistry::new();
 //!
 //! // Register a custom check
 //! registry.add_check("database", || async {
 //!     // Check database connectivity
-//!     HealthStatus::Healthy
+//!     Ok(HealthStatus::Healthy)
 //! });
 //!
 //! // Run all checks
 //! let results = registry.check_all().await;
+//! # }
 //! ```
 //!
 //! ## Axum Integration
@@ -39,8 +40,8 @@
 //!
 //! let app = Router::new()
 //!     .route("/healthz", liveness_route())
-//!     .route("/readyz", readiness_route(registry.clone()))
-//!     .route("/startup", startup_route(registry.clone()));
+//!     .merge(readiness_route(registry.clone()))
+//!     .merge(startup_route(registry.clone()));
 //! # }
 //! ```
 
@@ -57,6 +58,15 @@ pub use error::HealthCheckError;
 pub use registry::HealthRegistry;
 pub use types::{CheckResult, HealthResponse, HealthStatus, LivenessResponse, ReadinessResponse};
 
+// Tests exercise failure paths and invariants directly; unwrap/expect,
+// slicing, and panicking asserts are acceptable here — violations
+// surface as test failures, not production panics.
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
