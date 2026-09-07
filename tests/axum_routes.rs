@@ -143,7 +143,8 @@ async fn startup_route_returns_503_when_unhealthy() {
 
 #[tokio::test]
 async fn detailed_route_returns_200_with_check_details_when_ready() {
-    let registry = registry_with(vec![("db", Outcome::Healthy), ("queue", Outcome::Degraded)]).await;
+    let registry =
+        registry_with(vec![("db", Outcome::Healthy), ("queue", Outcome::Degraded)]).await;
     let res = detailed_route(registry)
         .oneshot(
             Request::get("/healthz/detailed")

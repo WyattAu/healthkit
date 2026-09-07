@@ -222,7 +222,9 @@ mod tests {
         tokio::task::spawn_blocking(move || {
             r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
             r.add_check("failing", || async {
-                Err(HealthCheckError::CheckTimedOut(std::time::Duration::from_secs(2)))
+                Err(HealthCheckError::CheckTimedOut(
+                    std::time::Duration::from_secs(2),
+                ))
             });
         })
         .await
