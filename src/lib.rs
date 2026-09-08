@@ -48,6 +48,9 @@
 //! ## Optional Features
 //!
 //! - `axum` (default) — ready-to-use route handlers.
+//! - `prometheus` — render check results as Prometheus text exposition
+//!   ([`metrics::render_prometheus`]) plus a `/metrics` handler and route
+//!   (with `axum`).
 //! - `sqlx` — [`checks::sqlx::SqlxCheck`], a `SELECT 1` probe for a
 //!   `sqlx::Pool` with timeout and latency-degradation thresholds.
 //! - `redis` — [`checks::redis::RedisCheck`], a `PING` probe with the same
@@ -64,6 +67,10 @@ pub mod axum;
 #[cfg(any(feature = "redis", feature = "sqlx"))]
 pub mod checks;
 
+/// Prometheus text-exposition rendering of check results.
+#[cfg(feature = "prometheus")]
+pub mod metrics;
+
 mod registry;
 
 #[cfg(feature = "redis")]
@@ -73,6 +80,12 @@ pub use checks::sqlx::SqlxCheck;
 pub use error::HealthCheckError;
 pub use registry::HealthRegistry;
 pub use types::{CheckResult, HealthResponse, HealthStatus, LivenessResponse, ReadinessResponse};
+
+#[cfg(feature = "prometheus")]
+pub use metrics::render_prometheus;
+
+#[cfg(all(feature = "prometheus", feature = "axum"))]
+pub use metrics::{MetricsState, metrics_handler};
 
 // Tests exercise failure paths and invariants directly; unwrap/expect,
 // slicing, and panicking asserts are acceptable here — violations

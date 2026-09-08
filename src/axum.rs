@@ -48,6 +48,18 @@ pub fn detailed_route(registry: HealthRegistry) -> Router {
         .with_state(HealthState { registry })
 }
 
+/// Returns a route handler exposing check results as Prometheus metrics
+/// (`/metrics`).
+///
+/// Available with the `prometheus` feature. Every scrape runs all checks and
+/// renders the text exposition format; the response is always `200 OK`.
+#[cfg(feature = "prometheus")]
+pub fn metrics_route(registry: HealthRegistry) -> Router {
+    Router::new()
+        .route("/metrics", get(crate::metrics::metrics_handler))
+        .with_state(crate::metrics::MetricsState::new(registry))
+}
+
 async fn liveness_handler() -> Response {
     let response = LivenessResponse {
         status: crate::types::HealthStatus::Healthy,
