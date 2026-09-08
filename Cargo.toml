@@ -20,6 +20,17 @@ thiserror = "2"
 version = "0.8"
 optional = true
 
+[dependencies.redis]
+version = "0.32"
+default-features = false
+optional = true
+
+[dependencies.sqlx]
+version = "0.8"
+default-features = false
+features = ["runtime-tokio", "sqlite"]
+optional = true
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -30,10 +41,25 @@ tower = { version = "0.5", features = ["util"] }
 [features]
 default = ["axum"]
 axum = ["dep:axum"]
+prometheus = []
+redis = ["dep:redis"]
+sqlx = ["dep:sqlx"]
 
 [[bench]]
 name = "health_bench"
 harness = false
+
+[[test]]
+name = "prometheus_metrics"
+required-features = ["prometheus", "axum"]
+
+[[test]]
+name = "redis_check"
+required-features = ["redis"]
+
+[[test]]
+name = "sqlx_check"
+required-features = ["sqlx"]
 
 [lints.clippy]
 unwrap_used = "deny"

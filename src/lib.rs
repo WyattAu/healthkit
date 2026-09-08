@@ -44,6 +44,14 @@
 //!     .merge(startup_route(registry.clone()));
 //! # }
 //! ```
+//!
+//! ## Optional Features
+//!
+//! - `axum` (default) — ready-to-use route handlers.
+//! - `sqlx` — [`checks::sqlx::SqlxCheck`], a `SELECT 1` probe for a
+//!   `sqlx::Pool` with timeout and latency-degradation thresholds.
+//! - `redis` — [`checks::redis::RedisCheck`], a `PING` probe with the same
+//!   semantics.
 
 mod error;
 mod types;
@@ -52,8 +60,16 @@ mod types;
 #[cfg(feature = "axum")]
 pub mod axum;
 
+/// Production dependency checks for common backends.
+#[cfg(any(feature = "redis", feature = "sqlx"))]
+pub mod checks;
+
 mod registry;
 
+#[cfg(feature = "redis")]
+pub use checks::redis::RedisCheck;
+#[cfg(feature = "sqlx")]
+pub use checks::sqlx::SqlxCheck;
 pub use error::HealthCheckError;
 pub use registry::HealthRegistry;
 pub use types::{CheckResult, HealthResponse, HealthStatus, LivenessResponse, ReadinessResponse};
