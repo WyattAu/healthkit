@@ -49,6 +49,10 @@ sqlx = ["dep:sqlx"]
 name = "health_bench"
 harness = false
 
+[[example]]
+name = "k8s_service"
+required-features = ["axum", "sqlx", "redis", "prometheus"]
+
 [[test]]
 name = "prometheus_metrics"
 required-features = ["prometheus", "axum"]

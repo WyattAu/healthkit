@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- `examples/k8s_service.rs`: complete Kubernetes-ready service wiring every
+  route (liveness, readiness, startup, detailed, Prometheus `/metrics`) with
+  `SqlxCheck` and `RedisCheck` — including the production patterns the docs
+  recommend: dependency checks only on readiness, a dedicated startup
+  registry, and a `draining` check that flips `/readyz` to 503 on SIGTERM
+  while axum drains in-flight connections.
+- README: expanded "Kubernetes Deployment Guide" (probe-to-route mapping,
+  timeout alignment between kubelet and check timeouts, startup-probe
+  budgeting, graceful-shutdown/preStop integration).
+- COMPARISON.md: positioning against `kube-health-check` and the dormant
+  `health` crate, with the ecosystem status as of September 2026.
+
 ## [1.1.0] - 2026-09-09
 
 ### Added

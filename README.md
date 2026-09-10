@@ -89,33 +89,124 @@ let app = Router::new()
 Prefer a custom pipeline? `healthkit::render_prometheus(&results)` renders
 the same exposition for any `Vec<CheckResult>`.
 
-## Kubernetes Probe Configuration
+## Kubernetes Deployment Guide
+
+### Probe-to-route mapping
+
+| Probe            | Route                | What it should answer                          |
+|------------------|----------------------|------------------------------------------------|
+| `livenessProbe`  | `GET /healthz`       | "Is the process alive?" — never checks deps    |
+| `readinessProbe` | `GET /readyz`        | "Should traffic be routed here?" — checks deps |
+| `startupProbe`   | `GET /startupz`      | "Is initialization done?" — gates the others   |
+| (scrape)         | `GET /metrics`       | Prometheus text exposition, always `200 OK`    |
+| (debugging)      | `GET /healthz/detailed` | Per-check JSON with status and duration     |
+
+`/healthz` deliberately runs **no** checks: a liveness failure restarts the
+container, and killing a pod because Redis hiccuped turns a blip into an
+outage. Dependency checks belong in `/readyz`. A complete, runnable service
+showing all four routes plus graceful shutdown lives in
+[`examples/k8s_service.rs`](examples/k8s_service.rs):
+
+```text
+cargo run --example k8s_service --all-features
+```
+
+### Recommended manifest
 
 ```yaml
 apiVersion: v1
 kind: Pod
 spec:
+  terminationGracePeriodSeconds: 40
   containers:
   - name: app
-    livenessProbe:
-      httpGet:
-        path: /healthz
-        port: 3000
-      initialDelaySeconds: 5
-      periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /readyz
-        port: 3000
-      initialDelaySeconds: 5
-      periodSeconds: 5
+    ports:
+    - containerPort: 3000
     startupProbe:
       httpGet:
         path: /startupz
         port: 3000
-      failureThreshold: 30
       periodSeconds: 2
+      failureThreshold: 30      # allows up to 60 s for migrations/init
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 3000
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: 3000
+      periodSeconds: 5
+      timeoutSeconds: 3         # must exceed your check timeouts (below)
+      failureThreshold: 3
+    lifecycle:
+      preStop:
+        exec:
+          command: ["sleep", "5"]
 ```
+
+### Aligning probe timeouts with check timeouts
+
+Every timeout in the chain must leave headroom for the one below it:
+
+```text
+kubelet timeoutSeconds  >  check timeout  >  healthy probe latency
+```
+
+If you register `SqlxCheck::new(pool, Duration::from_secs(2), 500)`, a
+readiness probe with the Kubernetes default `timeoutSeconds: 1` will report
+failures whenever the database round-trip exceeds 1 s — flapping your pod out
+of `Service` endpoints even though the check itself would have returned
+`Healthy` at 1.2 s. Set `timeoutSeconds` comfortably above the check timeout
+(3 s for a 2 s check), and `periodSeconds` large enough that a probe never
+overlaps the previous one.
+
+The `warn_above_ms` threshold is your *degradation* signal: probes still
+succeed (HTTP 200) but `/metrics` reports `healthkit_check_healthiness = 0.5`
+and `/healthz/detailed` shows the elevated duration. Alert on the metric;
+don't fail the probe.
+
+### Startup probes
+
+Until the startup probe first succeeds, Kubernetes disables liveness and
+readiness — use it to cover slow initialization (schema migrations, cache
+warming) without huge `initialDelaySeconds` on the other probes. Budget
+`failureThreshold × periodSeconds` above your worst-case startup time. Keep
+the startup registry free of dependency checks: if Redis being down at boot
+caused `/startupz` to fail, the pod would restart-loop instead of waiting
+`NotReady` for the dependency to recover.
+
+### Graceful shutdown
+
+On termination Kubernetes sends `SIGTERM` and removes the pod from Service
+endpoints — **concurrently, not sequentially**. Route traffic away before
+connections start closing:
+
+1. Register a *draining* check that turns `Unhealthy` when a shutdown signal
+   has been observed, so `/readyz` starts returning `503` immediately.
+2. Handle `SIGTERM` with `axum::serve(...).with_graceful_shutdown(...)` and
+   let in-flight requests finish.
+3. Add a `preStop: sleep 5` hook as belt-and-braces for endpoint-propagation
+   delay, and size `terminationGracePeriodSeconds` above your longest request.
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command: ["sleep", "5"]
+```
+
+The example implements steps 1–2: the `draining` check flips on SIGTERM/SIGINT
+receipt, readiness returns 503 during the drain window, and the process exits
+only after axum's graceful shutdown completes.
+
+## Comparison
+
+See [COMPARISON.md](COMPARISON.md) for how `healthkit` compares with
+`kube-health-check` and the `health` crate.
 
 ## Usage
 
