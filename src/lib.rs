@@ -33,6 +33,8 @@
 //! Enable the default `axum` feature for ready-to-use route handlers:
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "axum")]
+//! # mod axum_example {
 //! use axum::Router;
 //! use healthkit::{HealthRegistry, axum::{liveness_route, readiness_route, startup_route}};
 //!
@@ -44,6 +46,7 @@
 //!     .route("/healthz", liveness_route())
 //!     .merge(readiness_route(registry.clone()))
 //!     .merge(startup_route(registry.clone()));
+//! # }
 //! # }
 //! ```
 //!
@@ -93,10 +96,7 @@ pub use types::{CheckResult, HealthResponse, HealthStatus, LivenessResponse, Rea
 pub use metrics::render_prometheus;
 
 #[cfg(all(feature = "prometheus", feature = "axum"))]
-#[cfg_attr(
-    docsrs,
-    doc(cfg(all(feature = "prometheus", feature = "axum")))
-)]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "prometheus", feature = "axum"))))]
 pub use metrics::{MetricsState, metrics_handler};
 
 // Tests exercise failure paths and invariants directly; unwrap/expect,
