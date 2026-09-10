@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -61,30 +63,40 @@ mod types;
 
 /// Axum integration for health check endpoints.
 #[cfg(feature = "axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 pub mod axum;
 
 /// Production dependency checks for common backends.
 #[cfg(any(feature = "redis", feature = "sqlx"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "redis", feature = "sqlx"))))]
 pub mod checks;
 
 /// Prometheus text-exposition rendering of check results.
 #[cfg(feature = "prometheus")]
+#[cfg_attr(docsrs, doc(cfg(feature = "prometheus")))]
 pub mod metrics;
 
 mod registry;
 
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub use checks::redis::RedisCheck;
 #[cfg(feature = "sqlx")]
+#[cfg_attr(docsrs, doc(cfg(feature = "sqlx")))]
 pub use checks::sqlx::SqlxCheck;
 pub use error::HealthCheckError;
 pub use registry::HealthRegistry;
 pub use types::{CheckResult, HealthResponse, HealthStatus, LivenessResponse, ReadinessResponse};
 
 #[cfg(feature = "prometheus")]
+#[cfg_attr(docsrs, doc(cfg(feature = "prometheus")))]
 pub use metrics::render_prometheus;
 
 #[cfg(all(feature = "prometheus", feature = "axum"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(all(feature = "prometheus", feature = "axum")))
+)]
 pub use metrics::{MetricsState, metrics_handler};
 
 // Tests exercise failure paths and invariants directly; unwrap/expect,

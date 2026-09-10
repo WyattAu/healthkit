@@ -2,6 +2,7 @@
 
 Health check endpoints for Rust — liveness, readiness, and startup probes with dependency checking for Kubernetes and Docker.
 
+[![docs.rs](https://docs.rs/healthkit/badge.svg)](https://docs.rs/healthkit)
 [![Crates.io](https://img.shields.io/crates/v/healthkit.svg)](https://crates.io/crates/healthkit)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](./LICENSE-MIT)
 
