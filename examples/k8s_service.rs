@@ -5,9 +5,10 @@
 //! | Route       | Probe                | Notes                                        |
 //! |-------------|----------------------|----------------------------------------------|
 //! | `/healthz`  | `livenessProbe`      | Always healthy while the server runs         |
+//! | `/ping`     | Load balancer check  | Constant `OK` body, ALB/GCP-friendly         |
 //! | `/readyz`   | `readinessProbe`     | sqlx + redis + drain checks; 503 when failing|
-//! | `/startupz` | `startupProbe`       | Gated by a dedicated `initialized` check     |
-//! | `/metrics`  | Prometheus scrape    | Text exposition 0.0.4, always `200 OK`       |
+//! | `/startupz` | `startupProbe`       | Runs only the `init` check group             |
+//! | `/metrics`  | Prometheus scrape    | Text exposition 0.0.4, cached for 5 s        |
 //! | `/healthz/detailed` | Debugging    | Per-check JSON with statuses and durations   |
 //!
 //! Configuration (all optional):
@@ -36,7 +37,8 @@ use std::time::Duration;
 use axum::Router;
 use healthkit::HealthRegistry;
 use healthkit::axum::{
-    detailed_route, liveness_route, metrics_route, readiness_route, startup_route,
+    ReadinessConfig, detailed_route_with, liveness_route, metrics_route_with_cache, ping_route,
+    readiness_route_with, startup_route_for_group,
 };
 use healthkit::{HealthCheckError, HealthStatus, RedisCheck, SqlxCheck};
 
@@ -56,22 +58,43 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let pool = sqlx::sqlite::SqlitePool::connect(&database_url).await?;
 
     // `HealthRegistry::add_check` takes its lock in a blocking fashion, so
-    // registration must happen off the async runtime. Probe dependency
-    // checks (database, cache) belong in the *readiness* registry: if redis
-    // is down the pod should stop receiving traffic, not be restarted.
+    // registration must happen off the async runtime. All checks live in
+    // one registry; per-route subsets come from groups:
+    // - every check runs on readiness (a redis outage should stop traffic,
+    //   not restart the pod),
+    // - only the `init` group gates the startup probe,
+    // - the `draining` check flips readiness to 503 on SIGTERM so
+    //   Kubernetes stops routing to this pod while connections drain.
     let draining = Arc::new(AtomicBool::new(false));
     let initialized = Arc::new(AtomicBool::new(false));
 
-    let readiness_registry = {
+    let registry = {
         let draining = draining.clone();
+        let initialized = initialized.clone();
         tokio::task::spawn_blocking(move || {
-            let registry = HealthRegistry::new();
+            let registry = HealthRegistry::new()
+                // One slow dependency can no longer stall the other probes:
+                // checks run concurrently and each is bounded by this
+                // deadline (kubelet timeoutSeconds must stay above it).
+                .with_default_timeout(Duration::from_secs(2));
             SqlxCheck::new(pool, Duration::from_secs(2), 500).register(&registry, "database");
             if let Some(url) = redis_url {
                 RedisCheck::new(url, Duration::from_secs(2), 500).register(&registry, "cache");
             }
-            // Flips unhealthy while shutting down so Kubernetes and any
-            // load balancers stop routing to this pod during drain.
+            // Startup subset: only "is initialization done?" — dependency
+            // checks must not gate the startup probe.
+            registry.add_check_to_group("init", "initialized", move || {
+                let initialized = initialized.clone();
+                async move {
+                    if initialized.load(Ordering::SeqCst) {
+                        Ok(HealthStatus::Healthy)
+                    } else {
+                        Err(HealthCheckError::DependencyUnavailable(
+                            "initialization".into(),
+                        ))
+                    }
+                }
+            });
             registry.add_check("draining", move || {
                 let draining = draining.clone();
                 async move {
@@ -87,36 +110,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await?
     };
 
-    // The startup registry only answers "is this process ready to serve?".
-    // It must not depend on downstream services, or a redis outage would
-    // keep the pod in `CrashLoopBackOff` instead of merely `NotReady`.
-    let startup_registry = {
-        let initialized = initialized.clone();
-        tokio::task::spawn_blocking(move || {
-            let registry = HealthRegistry::new();
-            registry.add_check("initialized", move || {
-                let initialized = initialized.clone();
-                async move {
-                    if initialized.load(Ordering::SeqCst) {
-                        Ok(HealthStatus::Healthy)
-                    } else {
-                        Err(HealthCheckError::DependencyUnavailable(
-                            "initialization".into(),
-                        ))
-                    }
-                }
-            });
-            registry
-        })
-        .await?
-    };
-
     let app = Router::new()
         .route("/healthz", liveness_route())
-        .merge(readiness_route(readiness_registry.clone()))
-        .merge(startup_route(startup_registry))
-        .merge(detailed_route(readiness_registry.clone()))
-        .merge(metrics_route(readiness_registry));
+        .route("/ping", ping_route())
+        .merge(readiness_route_with(
+            registry.clone(),
+            ReadinessConfig::default(),
+        ))
+        .merge(startup_route_for_group(registry.clone(), "init"))
+        .merge(detailed_route_with(
+            registry.clone(),
+            ReadinessConfig::default(),
+        ))
+        .merge(metrics_route_with_cache(registry, Duration::from_secs(5)));
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     println!("healthkit example listening on {bind_addr}");

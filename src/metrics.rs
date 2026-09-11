@@ -30,6 +30,10 @@
 #[cfg(all(feature = "prometheus", feature = "axum"))]
 use crate::registry::HealthRegistry;
 use crate::types::{CheckResult, HealthStatus};
+#[cfg(all(feature = "prometheus", feature = "axum"))]
+use axum::Router;
+#[cfg(all(feature = "prometheus", feature = "axum"))]
+use axum::routing::get;
 
 /// Upper bounds (in seconds) of the latency histogram buckets. Mirrors the
 /// bucket set Prometheus uses for its own client libraries.
@@ -124,19 +128,73 @@ pub fn render_prometheus(results: &[CheckResult]) -> String {
 
 /// Shared state for the Prometheus metrics handler.
 ///
-/// Every scrape executes all registered checks and renders the results.
+/// By default every scrape executes all registered checks and renders the
+/// results. Use [`MetricsState::with_cache`] (or
+/// [`metrics_route_with_cache`]) to serve a cached rendering for a
+/// configurable TTL, so frequent scrapes don't execute the checks every
+/// time.
 #[cfg(all(feature = "prometheus", feature = "axum"))]
 #[derive(Clone)]
 pub struct MetricsState {
-    /// Registry whose checks run on every scrape.
+    /// Registry whose checks run on every (uncached) scrape.
     pub registry: HealthRegistry,
+    cache: std::sync::Arc<std::sync::RwLock<Option<(std::time::Instant, String)>>>,
+    ttl: Option<std::time::Duration>,
 }
 
 #[cfg(all(feature = "prometheus", feature = "axum"))]
 impl MetricsState {
-    /// Create handler state around a registry.
+    /// Create handler state around a registry; every scrape runs all checks.
     pub fn new(registry: HealthRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            cache: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            ttl: None,
+        }
+    }
+
+    /// Create handler state that serves a cached exposition for `ttl` after
+    /// each fresh render.
+    ///
+    /// The first scrape executes all checks and caches the output; scrapes
+    /// arriving within `ttl` receive the cached bytes instantly (no check
+    /// executions). The tradeoff is staleness: a check that flips status
+    /// right after a scrape stays invisible in `/metrics` for up to `ttl`.
+    /// Keep `ttl` well below the scrape interval (e.g. 5 s for 15 s
+    /// scrapes). Unhealthy *scrapes* are unaffected — the exposition always
+    /// returns `200 OK`, cached or not.
+    pub fn with_cache(registry: HealthRegistry, ttl: std::time::Duration) -> Self {
+        Self {
+            registry,
+            cache: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            ttl: Some(ttl),
+        }
+    }
+
+    /// Render (or fetch from cache) the exposition for a scrape.
+    async fn render(&self) -> String {
+        if let Some(ttl) = self.ttl {
+            if let Some(cached) = self.cached_within(ttl) {
+                return cached;
+            }
+        }
+
+        let results = self.registry.check_all().await;
+        let rendered = render_prometheus(&results);
+
+        if self.ttl.is_some() {
+            if let Ok(mut guard) = self.cache.write() {
+                *guard = Some((std::time::Instant::now(), rendered.clone()));
+            }
+        }
+
+        rendered
+    }
+
+    fn cached_within(&self, ttl: std::time::Duration) -> Option<String> {
+        let guard = self.cache.read().unwrap_or_else(|p| p.into_inner());
+        let (at, body) = guard.as_ref()?;
+        (at.elapsed() < ttl).then(|| body.clone())
     }
 }
 
@@ -145,16 +203,29 @@ impl MetricsState {
 /// Always responds `200 OK` with `Content-Type:
 /// text/plain; version=0.0.4; charset=utf-8` — a scrape must succeed even
 /// when checks report unhealthy, otherwise monitoring blind-spots appear
-/// exactly when they matter most.
+/// exactly when they matter.
+///
+/// By default every scrape runs all registered checks; see
+/// [`MetricsState::with_cache`] to bound that with a TTL cache.
 #[cfg(all(feature = "prometheus", feature = "axum"))]
 pub async fn metrics_handler(
     axum::extract::State(state): axum::extract::State<MetricsState>,
 ) -> impl axum::response::IntoResponse {
-    let results = state.registry.check_all().await;
+    let body = state.render().await;
     (
         [(axum::http::header::CONTENT_TYPE, EXPOSITION_CONTENT_TYPE)],
-        render_prometheus(&results),
+        body,
     )
+}
+
+/// Like [`crate::axum::metrics_route`], but the handler serves a cached
+/// exposition for `ttl` after each fresh render (see
+/// [`MetricsState::with_cache`]).
+#[cfg(all(feature = "prometheus", feature = "axum"))]
+pub fn metrics_route_with_cache(registry: HealthRegistry, ttl: std::time::Duration) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(MetricsState::with_cache(registry, ttl))
 }
 
 // Tests assert exact exposition bytes; unwrap/expect and panicking asserts

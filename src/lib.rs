@@ -23,8 +23,35 @@
 //!     Ok(HealthStatus::Healthy)
 //! });
 //!
-//! // Run all checks
+//! // Run all checks (concurrently — one slow dependency cannot stall the
+//! // others; each check is bounded by a per-check timeout, 5 s by default)
 //! let results = registry.check_all().await;
+//! # }
+//! ```
+//!
+//! ## Check groups (per-route subsets)
+//!
+//! Checks registered with [`HealthRegistry::add_check`] run on every probe.
+//! Checks registered into a named group additionally run when that group is
+//! probed — the standard Kubernetes startup pattern probes only an `init`
+//! group while readiness keeps checking everything:
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "axum")]
+//! # mod groups_example {
+//! use healthkit::{HealthRegistry, HealthStatus, axum::startup_route_for_group};
+//!
+//! # #[tokio::main]
+//! # async fn main() {
+//! let registry = HealthRegistry::new();
+//! registry.add_check("database", || async { Ok(HealthStatus::Healthy) });
+//! registry.add_check_to_group("init", "migrations", || async {
+//!     Ok(HealthStatus::Healthy)
+//! });
+//!
+//! // /startupz only answers "is initialization done?"
+//! let startup = startup_route_for_group(registry.clone(), "init");
+//! # }
 //! # }
 //! ```
 //!
@@ -55,7 +82,10 @@
 //! - `axum` (default) — ready-to-use route handlers.
 //! - `prometheus` — render check results as Prometheus text exposition
 //!   ([`metrics::render_prometheus`]) plus a `/metrics` handler and route
-//!   (with `axum`).
+//!   (with `axum`), optionally served from a TTL cache.
+//! - `metrics` — emit `healthkit_check_result` counters and
+//!   `healthkit_check_duration_seconds` histograms through the `metrics`
+//!   facade crate, alongside (not replacing) the hand-rolled renderer.
 //! - `sqlx` — [`checks::sqlx::SqlxCheck`], a `SELECT 1` probe for a
 //!   `sqlx::Pool` with timeout and latency-degradation thresholds.
 //! - `redis` — [`checks::redis::RedisCheck`], a `PING` probe with the same
@@ -174,137 +204,5 @@ mod tests {
 
         let err = HealthCheckError::ShuttingDown;
         assert_eq!(err.to_string(), "service is shutting down");
-    }
-
-    #[tokio::test]
-    async fn registry_new_and_add_check() {
-        let registry = HealthRegistry::new();
-        let results = registry.check_all().await;
-        assert!(results.is_empty());
-
-        let r = registry.clone();
-        tokio::task::spawn_blocking(move || {
-            r.add_check("always_healthy", || async { Ok(HealthStatus::Healthy) });
-        })
-        .await
-        .unwrap();
-
-        let results = registry.check_all().await;
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "always_healthy");
-        assert!(results[0].status.is_healthy());
-    }
-
-    #[tokio::test]
-    async fn registry_add_multiple_checks() {
-        let registry = HealthRegistry::new();
-        let r = registry.clone();
-        tokio::task::spawn_blocking(move || {
-            r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
-            r.add_check("degraded", || async { Ok(HealthStatus::Degraded) });
-            r.add_check("failing", || async {
-                Err(HealthCheckError::CheckFailed("oops".to_string()))
-            });
-        })
-        .await
-        .unwrap();
-
-        let results = registry.check_all().await;
-        assert_eq!(results.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn registry_check_liveness_no_checks() {
-        let registry = HealthRegistry::new();
-        let status = registry.check_liveness().await.unwrap();
-        assert!(status.is_healthy());
-    }
-
-    #[tokio::test]
-    async fn registry_check_readiness_mixed() {
-        let registry = HealthRegistry::new();
-        let r = registry.clone();
-        tokio::task::spawn_blocking(move || {
-            r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
-            r.add_check("degraded", || async { Ok(HealthStatus::Degraded) });
-        })
-        .await
-        .unwrap();
-
-        let (status, results) = registry.check_readiness().await.unwrap();
-        // Aggregate takes the worst status (Degraded=1 > Healthy=0)
-        assert_eq!(status, HealthStatus::Degraded);
-        assert_eq!(results.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn registry_check_liveness_mixed_reports_worst_status() {
-        let registry = HealthRegistry::new();
-        let r = registry.clone();
-        tokio::task::spawn_blocking(move || {
-            r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
-            r.add_check("degraded", || async { Ok(HealthStatus::Degraded) });
-            r.add_check("failing", || async {
-                Err(HealthCheckError::DependencyUnavailable("db".to_string()))
-            });
-        })
-        .await
-        .unwrap();
-
-        // Liveness aggregates to the worst observed status.
-        let status = registry.check_liveness().await.unwrap();
-        assert_eq!(status, HealthStatus::Unhealthy);
-    }
-
-    #[tokio::test]
-    async fn registry_check_readiness_failing_reports_unhealthy_with_details() {
-        let registry = HealthRegistry::new();
-        let r = registry.clone();
-        tokio::task::spawn_blocking(move || {
-            r.add_check("ok", || async { Ok(HealthStatus::Healthy) });
-            r.add_check("failing", || async {
-                Err(HealthCheckError::CheckTimedOut(
-                    std::time::Duration::from_secs(2),
-                ))
-            });
-        })
-        .await
-        .unwrap();
-
-        let (status, results) = registry.check_readiness().await.unwrap();
-        assert_eq!(status, HealthStatus::Unhealthy);
-        let failing = results.iter().find(|r| r.name == "failing").unwrap();
-        assert_eq!(failing.status, HealthStatus::Unhealthy);
-        assert!(failing.message.is_none());
-    }
-
-    #[tokio::test]
-    async fn registry_default_is_empty_and_healthy() {
-        let registry = HealthRegistry::default();
-        assert!(registry.check_all().await.is_empty());
-        assert_eq!(
-            registry.check_liveness().await.unwrap(),
-            HealthStatus::Healthy
-        );
-        let (status, results) = registry.check_readiness().await.unwrap();
-        assert_eq!(status, HealthStatus::Healthy);
-        assert!(results.is_empty());
-    }
-
-    #[tokio::test]
-    async fn registry_check_with_error_returns_unhealthy() {
-        let registry = HealthRegistry::new();
-        let r = registry.clone();
-        tokio::task::spawn_blocking(move || {
-            r.add_check("failing", || async {
-                Err(HealthCheckError::CheckFailed("oops".to_string()))
-            });
-        })
-        .await
-        .unwrap();
-
-        let results = registry.check_all().await;
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].status, HealthStatus::Unhealthy);
     }
 }

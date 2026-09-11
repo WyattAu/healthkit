@@ -101,11 +101,10 @@ async fn readiness_route_returns_503_when_a_check_fails() {
     assert_eq!(json["status"], "unhealthy");
     let checks = json["checks"].as_array().unwrap();
     assert_eq!(checks.len(), 2);
-    // The failed check reports Unhealthy and carries no message (registry
-    // folds the error into a status).
+    // The failed check reports Unhealthy and carries the error detail.
     let cache = checks.iter().find(|c| c["name"] == "cache").unwrap();
     assert_eq!(cache["status"], "unhealthy");
-    assert!(cache.get("message").is_none());
+    assert_eq!(cache["message"], "health check failed: dependency down");
     // The passing check still reports Healthy in the same payload.
     let db = checks.iter().find(|c| c["name"] == "db").unwrap();
     assert_eq!(db["status"], "healthy");
@@ -176,4 +175,170 @@ async fn detailed_route_returns_503_when_not_ready() {
 
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body_json(res).await["status"], "unhealthy");
+}
+
+#[tokio::test]
+async fn degraded_readiness_is_200_by_default() {
+    let registry =
+        registry_with(vec![("db", Outcome::Healthy), ("cache", Outcome::Degraded)]).await;
+    let res = readiness_route(registry)
+        .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    // 1.1 behavior: a degraded-but-serviceable pod stays in the LB pool,
+    // and the body still reports the degraded detail.
+    assert_eq!(res.status(), StatusCode::OK);
+    let json = body_json(res).await;
+    assert_eq!(json["status"], "degraded");
+    let checks = json["checks"].as_array().unwrap();
+    let cache = checks.iter().find(|c| c["name"] == "cache").unwrap();
+    assert_eq!(cache["status"], "degraded");
+}
+
+#[tokio::test]
+async fn degraded_readiness_is_503_when_strict() {
+    use healthkit::axum::{ReadinessConfig, readiness_route_with};
+
+    let registry = registry_with(vec![("cache", Outcome::Degraded)]).await;
+    let res = readiness_route_with(registry, ReadinessConfig::new().degraded_fails_readiness())
+        .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn degraded_detailed_route_is_503_when_strict() {
+    use healthkit::axum::{ReadinessConfig, detailed_route_with};
+
+    let registry = registry_with(vec![("cache", Outcome::Degraded)]).await;
+    let res = detailed_route_with(registry, ReadinessConfig::new().degraded_fails_readiness())
+        .oneshot(
+            Request::get("/healthz/detailed")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body_json(res).await["status"], "degraded");
+}
+
+#[tokio::test]
+async fn unhealthy_readiness_is_503_even_in_lenient_mode() {
+    let registry = registry_with(vec![("db", Outcome::Failing)]).await;
+    let res = readiness_route(registry)
+        .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn ping_route_returns_constant_ok_body() {
+    use healthkit::axum::ping_route;
+
+    let res = ping_route()
+        .oneshot(Request::get("/ping").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-type"], "text/plain; charset=utf-8");
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&bytes[..], b"OK");
+}
+
+#[tokio::test]
+async fn head_requests_are_served_by_get_handlers() {
+    use healthkit::axum::ping_route;
+
+    // Load balancers probe with HEAD; axum routes HEAD to GET handlers and
+    // strips the body.
+    for (path, app) in [
+        (
+            "/healthz",
+            axum::Router::new().route("/healthz", liveness_route()),
+        ),
+        ("/readyz", readiness_route(HealthRegistry::new())),
+        ("/ping", axum::Router::new().route("/ping", ping_route())),
+    ] {
+        let request = Request::builder()
+            .method("HEAD")
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(request).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "HEAD {path} must be 200");
+        let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(bytes.is_empty(), "HEAD {path} body must be stripped");
+    }
+}
+
+#[tokio::test]
+async fn startup_route_for_group_runs_only_the_named_group() {
+    use healthkit::axum::startup_route_for_group;
+
+    let registry = HealthRegistry::new();
+    let r = registry.clone();
+    tokio::task::spawn_blocking(move || {
+        // A dependency check that must NOT gate the startup probe.
+        r.add_check("database", || async {
+            Err::<HealthStatus, _>(HealthCheckError::CheckFailed("down".into()))
+        });
+        // The init subset the startup probe actually wants.
+        r.add_check_to_group("init", "migrations", || async { Ok(HealthStatus::Healthy) });
+        r.add_check_to_group("init", "cache_warm", || async { Ok(HealthStatus::Healthy) });
+    })
+    .await
+    .unwrap();
+
+    let res = startup_route_for_group(registry, "init")
+        .oneshot(Request::get("/startupz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    // Only the init group ran — the failing dependency check didn't.
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(res).await,
+        serde_json::json!({"status": "healthy"})
+    );
+}
+
+#[tokio::test]
+async fn startup_route_for_group_reports_group_failures() {
+    use healthkit::axum::startup_route_for_group;
+
+    let registry = HealthRegistry::new();
+    let r = registry.clone();
+    tokio::task::spawn_blocking(move || {
+        r.add_check_to_group("init", "migrations", || async {
+            Err::<HealthStatus, _>(HealthCheckError::CheckFailed("migration 7 failed".into()))
+        });
+    })
+    .await
+    .unwrap();
+
+    let res = startup_route_for_group(registry, "init")
+        .oneshot(Request::get("/startupz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        body_json(res).await,
+        serde_json::json!({"status": "unhealthy"})
+    );
+}
+
+#[tokio::test]
+async fn startup_route_without_group_still_runs_everything() {
+    let registry = registry_with(vec![("init", Outcome::Healthy), ("db", Outcome::Failing)]).await;
+    let res = startup_route(registry)
+        .oneshot(Request::get("/startupz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    // Compat: the plain startup route keeps running all registered checks.
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

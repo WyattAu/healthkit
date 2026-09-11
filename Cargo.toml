@@ -1,6 +1,6 @@
 [package]
 name = "healthkit"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Health check endpoints for Rust — liveness, readiness, and startup probes with dependency checking for Kubernetes and Docker"
@@ -11,10 +11,15 @@ categories = ["web-programming"]
 exclude = ["/target"]
 
 [dependencies]
+futures = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "signal", "sync", "time"] }
 thiserror = "2"
+
+[dependencies.metrics]
+version = "0.24"
+optional = true
 
 [dependencies.axum]
 version = "0.8"
@@ -37,10 +42,13 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 tower = { version = "0.5", features = ["util"] }
 
+[dev-dependencies.metrics]
+version = "0.24"
 
 [features]
 default = ["axum"]
 axum = ["dep:axum"]
+metrics = ["dep:metrics"]
 prometheus = []
 redis = ["dep:redis"]
 sqlx = ["dep:sqlx"]
@@ -56,6 +64,10 @@ required-features = ["axum", "sqlx", "redis", "prometheus"]
 [[test]]
 name = "prometheus_metrics"
 required-features = ["prometheus", "axum"]
+
+[[test]]
+name = "metrics_facade"
+required-features = ["metrics"]
 
 [[test]]
 name = "redis_check"
