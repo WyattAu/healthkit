@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future::join_all;
-use tokio::sync::RwLock;
+use std::sync::RwLock as StdRwLock;
 use tokio::time::timeout;
 
 use crate::error::HealthCheckError;
@@ -17,6 +17,7 @@ type CheckFn = Box<
 >;
 
 /// A registered health check with its name and optional group.
+#[derive(Clone)]
 struct RegisteredCheck {
     name: String,
     /// Group the check belongs to, if any. Checks registered via
@@ -24,7 +25,7 @@ struct RegisteredCheck {
     /// registry-wide check; checks added to a group also run when that
     /// group is checked explicitly (see [`HealthRegistry::check_group`]).
     group: Option<String>,
-    check_fn: CheckFn,
+    check_fn: Arc<CheckFn>,
 }
 
 /// Registry of health checks that can be executed on demand.
@@ -37,7 +38,7 @@ struct RegisteredCheck {
 /// elapsed deadline.
 #[derive(Clone)]
 pub struct HealthRegistry {
-    checks: Arc<RwLock<Vec<RegisteredCheck>>>,
+    checks: Arc<StdRwLock<Vec<RegisteredCheck>>>,
     default_timeout: Duration,
 }
 
@@ -45,7 +46,7 @@ impl HealthRegistry {
     /// Create a new empty health registry.
     pub fn new() -> Self {
         Self {
-            checks: Arc::new(RwLock::new(Vec::new())),
+            checks: Arc::new(StdRwLock::new(Vec::new())),
             default_timeout: Duration::from_secs(5),
         }
     }
@@ -110,8 +111,11 @@ impl HealthRegistry {
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<HealthStatus, HealthCheckError>> + Send + 'static,
     {
-        let check_fn: CheckFn = Box::new(move || Box::pin(check()));
-        let mut checks = self.checks.blocking_write();
+        let check_fn: Arc<CheckFn> = Arc::new(Box::new(move || Box::pin(check())));
+        let mut checks = self
+            .checks
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         checks.push(RegisteredCheck {
             name: name.into(),
             group,
@@ -129,9 +133,13 @@ impl HealthRegistry {
     ///
     /// Results are returned in registration order.
     pub async fn check_all(&self) -> Vec<CheckResult> {
-        let checks = self.checks.read().await;
         let timeout = self.default_timeout;
-        let results = join_all(checks.iter().map(|check| run_one(check, timeout))).await;
+        let snapshot: Vec<RegisteredCheck> = self
+            .checks
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let results = join_all(snapshot.iter().map(|check| run_one(check, timeout))).await;
 
         #[cfg(feature = "metrics")]
         for result in &results {
@@ -149,10 +157,14 @@ impl HealthRegistry {
     /// were not added to the group do not run. An unknown group yields an
     /// empty `Vec`.
     pub async fn check_group(&self, group: &str) -> Vec<CheckResult> {
-        let checks = self.checks.read().await;
         let timeout = self.default_timeout;
+        let snapshot: Vec<RegisteredCheck> = self
+            .checks
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         join_all(
-            checks
+            snapshot
                 .iter()
                 .filter(|check| check.group.as_deref() == Some(group))
                 .map(|check| run_one(check, timeout)),
