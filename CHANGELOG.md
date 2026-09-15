@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
 
+## [1.2.1] - 2026-09-15
+
+### Fixed
+
+- `HealthRegistry::add_check` no longer performs runtime-blocking work
+  during registration; check reads use an immutable snapshot instead,
+  keeping `add_check` safe to call from async contexts.
+
 ## [1.2.0] - 2026-09-11
 
 Backward-compatible release: everything below is additive. Existing
