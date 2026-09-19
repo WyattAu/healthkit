@@ -352,6 +352,18 @@ impl Default for HealthRegistry {
     }
 }
 
+// Auto-trait surface preservation (1.3.1): swapping the internal
+// `std::sync::RwLock` for `parking_lot::RwLock` silently removed
+// `UnwindSafe`/`RefUnwindSafe` from `HealthRegistry` — `lock_api` types do
+// not implement the auto traits, while `std`'s poisoning lock does. The
+// impls are sound to re-assert: parking_lot's guard releases the lock on
+// unwind (RAII) and there is no poisoning, so a panic caught through a
+// shared `&HealthRegistry` cannot observe torn lock state; the registered
+// closures are only polled through `run_one`, which folds failures into
+// `CheckResult` and never unwinds through the registry itself.
+impl std::panic::UnwindSafe for HealthRegistry {}
+impl std::panic::RefUnwindSafe for HealthRegistry {}
+
 // Tests exercise failure paths and invariants directly; unwrap/expect,
 // slicing, and panicking asserts are acceptable here — violations
 // surface as test failures, not production panics.

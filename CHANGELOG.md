@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
 
+## [1.3.1] - 2026-09-19
+
+### Fixed
+
+- **Restored the `UnwindSafe`/`RefUnwindSafe` auto-trait surface of
+  `HealthRegistry` (and `MetricsState`, which contains a registry).**
+  1.3.0's internal swap from `std::sync::RwLock` to
+  `parking_lot::RwLock` silently removed the auto traits — `lock_api`
+  types do not implement them, while `std`'s poisoning lock does — which
+  the shared-gate semver check flagged as a major-level API break for
+  downstream `catch_unwind` users. The traits are re-asserted with a
+  documented soundness rationale: parking_lot's guard releases the lock
+  on unwind and there is no poisoning, so a panic caught through a shared
+  `&HealthRegistry` cannot observe torn lock state.
+
 ## [1.3.0] - 2026-09-19
 
 ### Fixed
