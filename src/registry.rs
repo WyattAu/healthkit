@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future::join_all;
-use std::sync::RwLock as StdRwLock;
+use parking_lot::RwLock;
 use tokio::time::timeout;
 
 use crate::error::HealthCheckError;
@@ -36,9 +36,23 @@ struct RegisteredCheck {
 /// [`HealthRegistry::with_default_timeout`]). A check that exceeds the
 /// timeout reports [`HealthStatus::Unhealthy`] with a message naming the
 /// elapsed deadline.
+///
+/// # Registration and async runtimes
+///
+/// Registration is intended **before the runtime starts serving** (build
+/// the registry, add checks, then serve the probes). The registry lock is
+/// a `parking_lot::RwLock` — never poisoned, held only for the brief
+/// vector push — so the synchronous [`HealthRegistry::add_check`] cannot
+/// block indefinitely even under contention. For callers that are already
+/// inside a runtime (a supervisor task registering checks after startup,
+/// integration tests), the async variants
+/// [`HealthRegistry::add_check_async`] /
+/// [`HealthRegistry::add_check_to_group_async`] defer the write to tokio's
+/// blocking pool, so no async worker thread ever blocks on the registry
+/// lock.
 #[derive(Clone)]
 pub struct HealthRegistry {
-    checks: Arc<StdRwLock<Vec<RegisteredCheck>>>,
+    checks: Arc<RwLock<Vec<RegisteredCheck>>>,
     default_timeout: Duration,
 }
 
@@ -46,7 +60,7 @@ impl HealthRegistry {
     /// Create a new empty health registry.
     pub fn new() -> Self {
         Self {
-            checks: Arc::new(StdRwLock::new(Vec::new())),
+            checks: Arc::new(RwLock::new(Vec::new())),
             default_timeout: Duration::from_secs(5),
         }
     }
@@ -75,6 +89,14 @@ impl HealthRegistry {
     /// `check_liveness`, `check_readiness`). To register a check that only
     /// runs for a named subset (e.g. an init check for the startup probe),
     /// see [`HealthRegistry::add_check_to_group`].
+    ///
+    /// Registration takes the registry write lock synchronously. The lock
+    /// is a `parking_lot::RwLock` (no poisoning) held only for the vector
+    /// push, so the call cannot block indefinitely — but it does block the
+    /// calling thread briefly. Conventionally you register before the
+    /// runtime starts serving; if you are already inside an async context,
+    /// prefer [`HealthRegistry::add_check_async`], which moves the write
+    /// onto the blocking pool.
     pub fn add_check<F, Fut>(&self, name: impl Into<String>, check: F)
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -94,6 +116,10 @@ impl HealthRegistry {
     ///
     /// Group names are arbitrary strings; the same check name may appear in
     /// different groups, and a check never joins more than one group.
+    ///
+    /// Like [`HealthRegistry::add_check`], registration blocks the calling
+    /// thread briefly; inside an async context prefer
+    /// [`HealthRegistry::add_check_to_group_async`].
     pub fn add_check_to_group<F, Fut>(
         &self,
         group: impl Into<String>,
@@ -112,15 +138,90 @@ impl HealthRegistry {
         Fut: Future<Output = Result<HealthStatus, HealthCheckError>> + Send + 'static,
     {
         let check_fn: Arc<CheckFn> = Arc::new(Box::new(move || Box::pin(check())));
-        let mut checks = self
-            .checks
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut checks = self.checks.write();
         checks.push(RegisteredCheck {
             name: name.into(),
             group,
             check_fn,
         });
+    }
+
+    /// Register a health check from inside an async context.
+    ///
+    /// The async counterpart of [`HealthRegistry::add_check`]: identical
+    /// semantics, but the registry write is deferred to
+    /// [`tokio::task::spawn_blocking`], so no async worker thread ever
+    /// blocks on the registry lock. This is the safe way to register from a
+    /// task — on a `current_thread` runtime, blocking the (single) worker
+    /// stalls everything the runtime is polling.
+    ///
+    /// Must be polled within a tokio runtime (the blocking-pool spawn is
+    /// runtime-backed).
+    ///
+    /// # Errors
+    ///
+    /// [`HealthCheckError::ShuttingDown`] when the runtime is shutting down
+    /// and the registration task could not run — the check is then **not**
+    /// registered.
+    pub async fn add_check_async<F, Fut>(
+        &self,
+        name: impl Into<String>,
+        check: F,
+    ) -> Result<(), HealthCheckError>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<HealthStatus, HealthCheckError>> + Send + 'static,
+    {
+        self.add_check_inner_async(None, name, check).await
+    }
+
+    /// Register a grouped health check from inside an async context.
+    ///
+    /// The async counterpart of [`HealthRegistry::add_check_to_group`]:
+    /// same grouping semantics, with the registry write deferred to the
+    /// blocking pool (see [`HealthRegistry::add_check_async`]).
+    ///
+    /// # Errors
+    ///
+    /// [`HealthCheckError::ShuttingDown`] when the runtime is shutting down
+    /// and the registration task could not run — the check is then **not**
+    /// registered.
+    pub async fn add_check_to_group_async<F, Fut>(
+        &self,
+        group: impl Into<String>,
+        name: impl Into<String>,
+        check: F,
+    ) -> Result<(), HealthCheckError>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<HealthStatus, HealthCheckError>> + Send + 'static,
+    {
+        self.add_check_inner_async(Some(group.into()), name, check)
+            .await
+    }
+
+    async fn add_check_inner_async<F, Fut>(
+        &self,
+        group: Option<String>,
+        name: impl Into<String>,
+        check: F,
+    ) -> Result<(), HealthCheckError>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<HealthStatus, HealthCheckError>> + Send + 'static,
+    {
+        let check_fn: Arc<CheckFn> = Arc::new(Box::new(move || Box::pin(check())));
+        let checks = Arc::clone(&self.checks);
+        let name = name.into();
+        tokio::task::spawn_blocking(move || {
+            checks.write().push(RegisteredCheck {
+                name,
+                group,
+                check_fn,
+            });
+        })
+        .await
+        .map_err(|_| HealthCheckError::ShuttingDown)
     }
 
     /// Run all registered health checks and return the results.
@@ -134,11 +235,7 @@ impl HealthRegistry {
     /// Results are returned in registration order.
     pub async fn check_all(&self) -> Vec<CheckResult> {
         let timeout = self.default_timeout;
-        let snapshot: Vec<RegisteredCheck> = self
-            .checks
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let snapshot: Vec<RegisteredCheck> = self.checks.read().clone();
         let results = join_all(snapshot.iter().map(|check| run_one(check, timeout))).await;
 
         #[cfg(feature = "metrics")]
@@ -158,11 +255,7 @@ impl HealthRegistry {
     /// empty `Vec`.
     pub async fn check_group(&self, group: &str) -> Vec<CheckResult> {
         let timeout = self.default_timeout;
-        let snapshot: Vec<RegisteredCheck> = self
-            .checks
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let snapshot: Vec<RegisteredCheck> = self.checks.read().clone();
         join_all(
             snapshot
                 .iter()
@@ -271,6 +364,70 @@ impl Default for HealthRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn add_check_async_is_safe_inside_a_current_thread_runtime() {
+        // Regression (estate-integration round 3, metrics suite): calling
+        // the synchronous `add_check` inside an async context blocked the
+        // worker on the registry write lock — on a `current_thread` runtime
+        // that is the only worker, so the runtime stalled. The async
+        // variant defers the write to the blocking pool; this must
+        // complete on the default (current-thread) test runtime.
+        let registry = HealthRegistry::new();
+        registry
+            .add_check_async("db", || async { Ok(HealthStatus::Healthy) })
+            .await
+            .expect("in-runtime registration must succeed");
+
+        let results = registry.check_all().await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "db");
+        assert_eq!(results[0].status, HealthStatus::Healthy);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn add_check_to_group_async_is_safe_inside_a_current_thread_runtime() {
+        // Same regression as `add_check_async_...`, for grouped checks.
+        let registry = HealthRegistry::new();
+        registry
+            .add_check_async("ungrouped", || async { Ok(HealthStatus::Healthy) })
+            .await
+            .expect("in-runtime registration must succeed");
+        registry
+            .add_check_to_group_async("init", "migrations", || async { Ok(HealthStatus::Healthy) })
+            .await
+            .expect("in-runtime group registration must succeed");
+
+        let init = registry.check_group("init").await;
+        assert_eq!(init.len(), 1);
+        assert_eq!(init[0].name, "migrations");
+
+        // Grouped checks still run registry-wide.
+        assert_eq!(registry.check_all().await.len(), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn add_check_async_registrations_are_visible_to_probes_with_timeouts() {
+        // End-to-end through the async registration path: per-check
+        // timeout and message capture apply to checks registered
+        // in-runtime exactly as to startup-registered ones.
+        let registry = HealthRegistry::new().with_default_timeout(Duration::from_millis(100));
+        registry
+            .add_check_async("hangs", || async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(HealthStatus::Healthy)
+            })
+            .await
+            .expect("in-runtime registration must succeed");
+
+        let results = registry.check_all().await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, HealthStatus::Unhealthy);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("health check timed out after 100ms")
+        );
+    }
 
     #[tokio::test]
     async fn checks_run_concurrently_slow_check_does_not_delay_others() {

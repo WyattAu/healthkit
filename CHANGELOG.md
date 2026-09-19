@@ -3,6 +3,38 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
 
+## [1.3.0] - 2026-09-19
+
+### Fixed
+
+- **Registering a check from inside an async context can no longer block
+  (or stall) a runtime worker.** The estate-integration metrics suite
+  called `HealthRegistry::add_check` from a task: the write lock is a
+  `std::sync::RwLock`, and blocking the polling thread on it deadlocks a
+  `current_thread` runtime (one worker blocking on a lock whose readers
+  need that same worker).
+
+### Added
+
+- `HealthRegistry::add_check_async` and
+  `HealthRegistry::add_check_to_group_async` — async counterparts of the
+  sync registration methods for callers already inside a runtime. The
+  registry write is deferred to `tokio::task::spawn_blocking`, so no
+  async worker thread ever blocks on the registry lock. Return
+  `Result<(), HealthCheckError>`; `ShuttingDown` means the registration
+  task could not run (runtime shutting down) and the check is **not**
+  registered.
+- The registry's inner lock is now `parking_lot::RwLock`: no poisoning,
+  and the synchronous `add_check` holds it only for the vector push, so
+  off-runtime registration cannot block indefinitely. Registration
+  remains conventionally a startup activity — documented on
+  `HealthRegistry` and on `add_check` — with the async variants as the
+  in-runtime escape hatch.
+
+Regression test: `add_check_async` called directly inside a
+`current_thread` `#[tokio::test]` (the flagged panic/deadlock scenario)
+registers, probes, and times out checks end-to-end.
+
 ## [1.2.1] - 2026-09-15
 
 ### Fixed

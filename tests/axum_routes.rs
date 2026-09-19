@@ -22,9 +22,10 @@ enum Outcome {
     Failing,
 }
 
-/// Build a registry with the given checks. `add_check` uses
-/// `RwLock::blocking_write`, so registration must happen off the async
-/// runtime thread — same pattern as the unit tests in `lib.rs`.
+/// Build a registry with the given checks. Registration goes through
+/// `spawn_blocking` (the sync `add_check` blocks its calling thread
+/// briefly; tests run inside a runtime, so they defer to the blocking
+/// pool — or use `add_check_async`).
 async fn registry_with(outcomes: Vec<(&'static str, Outcome)>) -> HealthRegistry {
     let registry = HealthRegistry::new();
     let r = registry.clone();
