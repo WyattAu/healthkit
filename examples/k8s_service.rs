@@ -57,9 +57,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = sqlx::sqlite::SqlitePool::connect(&database_url).await?;
 
-    // `HealthRegistry::add_check` takes its lock in a blocking fashion, so
-    // registration must happen off the async runtime. All checks live in
-    // one registry; per-route subsets come from groups:
+    // `HealthRegistry::add_check` blocks its calling thread briefly (a
+    // parking_lot write lock), so registration happens off the async
+    // runtime here — for in-runtime registration use `add_check_async`.
+    // All checks live in one registry; per-route subsets come from groups:
     // - every check runs on readiness (a redis outage should stop traffic,
     //   not restart the pod),
     // - only the `init` group gates the startup probe,
