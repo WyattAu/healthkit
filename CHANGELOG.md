@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project are documented here. Format: [Keep a
-Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
+Changelog](https://keepachangelog.com/): versions follow [semver](https://semver.org).
 
 ## [1.3.1] - 2026-09-19
 
@@ -10,8 +10,8 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 - **Restored the `UnwindSafe`/`RefUnwindSafe` auto-trait surface of
   `HealthRegistry` (and `MetricsState`, which contains a registry).**
   1.3.0's internal swap from `std::sync::RwLock` to
-  `parking_lot::RwLock` silently removed the auto traits — `lock_api`
-  types do not implement them, while `std`'s poisoning lock does — which
+  `parking_lot::RwLock` silently removed the auto traits: `lock_api`
+  types do not implement them, while `std`'s poisoning lock does: which
   the shared-gate semver check flagged as a major-level API break for
   downstream `catch_unwind` users. The traits are re-asserted with a
   documented soundness rationale: parking_lot's guard releases the lock
@@ -32,7 +32,7 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 ### Added
 
 - `HealthRegistry::add_check_async` and
-  `HealthRegistry::add_check_to_group_async` — async counterparts of the
+  `HealthRegistry::add_check_to_group_async`: async counterparts of the
   sync registration methods for callers already inside a runtime. The
   registry write is deferred to `tokio::task::spawn_blocking`, so no
   async worker thread ever blocks on the registry lock. Return
@@ -42,8 +42,8 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 - The registry's inner lock is now `parking_lot::RwLock`: no poisoning,
   and the synchronous `add_check` holds it only for the vector push, so
   off-runtime registration cannot block indefinitely. Registration
-  remains conventionally a startup activity — documented on
-  `HealthRegistry` and on `add_check` — with the async variants as the
+  remains conventionally a startup activity: documented on
+  `HealthRegistry` and on `add_check`: with the async variants as the
   in-runtime escape hatch.
 
 Regression test: `add_check_async` called directly inside a
@@ -69,7 +69,7 @@ message.
 
 - **Concurrent checks**: `check_all` (and liveness/readiness/metrics, which
   build on it) now executes all registered checks concurrently instead of
-  sequentially — one slow dependency can no longer stall the whole probe.
+  sequentially: one slow dependency can no longer stall the whole probe.
 - **Per-check timeout**: `HealthRegistry::with_default_timeout` (default
   5 s). A check that exceeds the deadline reports `Unhealthy` with the
   message `health check timed out after Ns`; `Duration::ZERO` disables the
@@ -87,13 +87,13 @@ message.
   degraded pods keep receiving traffic while the body, `/healthz/detailed`,
   and `/metrics` report the degradation. Opt into strict draining with
   `degraded_fails_readiness()` (`Degraded` → `503`).
-- **LB compatibility**: `ping_route` — constant-body `OK` (`200`, plain
+- **LB compatibility**: `ping_route`: constant-body `OK` (`200`, plain
   text) for AWS ALB / GCP target-group health checks. `HEAD` requests are
   served by all `GET` routes (axum strips the body); documented in the new
   README load-balancer recipes section. `ReadinessConfig` also implements
   `Copy`/`Default`/`Debug`.
 - **Scrape caching**: `metrics_route_with_cache(registry, ttl)` /
-  `MetricsState::with_cache` — serve the Prometheus exposition from a TTL
+  `MetricsState::with_cache`: serve the Prometheus exposition from a TTL
   cache so scrapes don't execute all checks every time. Default
   (`metrics_route`) remains run-on-every-scrape.
 - **`metrics` facade feature** (default off): emits `healthkit_check_result`
@@ -108,7 +108,7 @@ message.
   (fresh/expired), metrics-facade emission.
 - `examples/k8s_service.rs`: complete Kubernetes-ready service wiring every
   route (liveness, readiness, startup, ping, detailed, Prometheus
-  `/metrics`) with `SqlxCheck` and `RedisCheck` — including the production
+  `/metrics`) with `SqlxCheck` and `RedisCheck`: including the production
   patterns the docs recommend: dependency checks only on readiness, an
   `init` group gating the startup probe, and a `draining` check that flips
   `/readyz` to 503 on SIGTERM while axum drains in-flight connections.
@@ -134,16 +134,16 @@ message.
 
 ### Added
 
-- `sqlx` feature: `SqlxCheck` — runs `SELECT 1` against any `sqlx::Pool`
+- `sqlx` feature: `SqlxCheck`: runs `SELECT 1` against any `sqlx::Pool`
   (generic over the backend; only `sqlite` is pulled for this crate's own
   tests) with a configurable timeout and a `warn_above_ms` latency threshold
   (success over the threshold reports `Degraded`).
-- `redis` feature: `RedisCheck` — `PING` probe over a synchronous connection
+- `redis` feature: `RedisCheck`: `PING` probe over a synchronous connection
   (works with `default-features = false`; no async runtime features pulled)
   with the same timeout/latency semantics.
 - `prometheus` feature: `render_prometheus` renders check results as
   Prometheus text exposition (version 0.0.4), hand-rolled without the
-  `prometheus` crate — a per-check `healthkit_check_healthiness` gauge
+  `prometheus` crate: a per-check `healthkit_check_healthiness` gauge
   (1 / 0.5 / 0) and a `healthkit_check_duration_seconds` histogram. With
   `axum`, adds `metrics_handler` / `metrics_route` serving `GET /metrics`
   (always `200 OK` so scrapes survive unhealthy states).

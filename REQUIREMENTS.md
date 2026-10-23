@@ -1,4 +1,4 @@
-# Requirements — healthkit
+# Requirements: healthkit
 
 Numbered, testable requirements. Every requirement maps to at least one named
 test; every security-relevant test cites at least one requirement. Doc
@@ -35,11 +35,11 @@ comments on the implementing public item carry `REQ-HLK-NNN` tags.
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| REQ-HLK-100 | No public function panics on failure inputs — connection errors, invalid URLs, timeouts, and poisoned state all surface as `HealthStatus::Unhealthy` or `Err(HealthCheckError)` | MUST |
+| REQ-HLK-100 | No public function panics on failure inputs: connection errors, invalid URLs, timeouts, and poisoned state all surface as `HealthStatus::Unhealthy` or `Err(HealthCheckError)` | MUST |
 | REQ-HLK-101 | A failing dependency (Redis/SQL down) must never crash the process or the HTTP handler; degradation is reported, not propagated as a panic | MUST |
 | REQ-HLK-102 | Redis credentials embedded in the URL are not echoed into check results or error messages | MUST |
 | REQ-HLK-103 | The crate forbids `unsafe` code; property-generated arbitrary statuses/messages cannot break response invariants | MUST |
-| REQ-HLK-104 | Readiness/liveness endpoints expose no secrets — bodies contain only check names, statuses, latencies, and caller-supplied messages | SHOULD |
+| REQ-HLK-104 | Readiness/liveness endpoints expose no secrets: bodies contain only check names, statuses, latencies, and caller-supplied messages | SHOULD |
 
 ## Robustness
 
