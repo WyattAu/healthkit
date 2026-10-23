@@ -1,4 +1,5 @@
 # healthkit
+[![Estate integration](https://github.com/WyattAu/estate-integration/actions/workflows/ci.yml/badge.svg)](https://github.com/WyattAu/estate-integration/actions/workflows/ci.yml)
 
 Health check endpoints for Rust: liveness, readiness, and startup probes with dependency checking for Kubernetes and Docker.
 
