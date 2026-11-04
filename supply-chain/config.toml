@@ -156,10 +156,6 @@ criteria = "safe-to-deploy"
 version = "0.3.34"
 criteria = "safe-to-deploy"
 
-[[exemptions.futures-core]]
-version = "0.3.34"
-criteria = "safe-to-deploy"
-
 [[exemptions.futures-executor]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
@@ -188,10 +184,6 @@ criteria = "safe-to-deploy"
 version = "0.14.7"
 criteria = "safe-to-deploy"
 
-[[exemptions.getrandom]]
-version = "0.4.3"
-criteria = "safe-to-run"
-
 [[exemptions.half]]
 version = "2.7.1"
 criteria = "safe-to-run"
@@ -202,18 +194,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hashlink]]
 version = "0.10.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.healthkit]]
-version = "1.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.healthkit]]
-version = "1.2.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.healthkit]]
-version = "1.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.healthkit]]
@@ -332,10 +312,6 @@ criteria = "safe-to-deploy"
 version = "0.2.17"
 criteria = "safe-to-deploy"
 
-[[exemptions.pkg-config]]
-version = "0.3.34"
-criteria = "safe-to-deploy"
-
 [[exemptions.plotters]]
 version = "0.3.7"
 criteria = "safe-to-run"
@@ -412,10 +388,6 @@ criteria = "safe-to-run"
 version = "1.0.23"
 criteria = "safe-to-deploy"
 
-[[exemptions.rustversion]]
-version = "1.0.23"
-criteria = "safe-to-run"
-
 [[exemptions.rusty-fork]]
 version = "0.3.1"
 criteria = "safe-to-run"
@@ -450,10 +422,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.shlex]]
-version = "2.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.signal-hook-registry]]
@@ -504,10 +472,6 @@ criteria = "safe-to-deploy"
 version = "3.0.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.sync_wrapper]]
-version = "1.0.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.synstructure]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
@@ -522,10 +486,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tinystr]]
 version = "0.8.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.tokio]]
-version = "1.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]
@@ -558,10 +518,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tracing-attributes]]
 version = "0.1.31"
-criteria = "safe-to-deploy"
-
-[[exemptions.tracing-core]]
-version = "0.1.36"
 criteria = "safe-to-deploy"
 
 [[exemptions.typenum]]
@@ -618,10 +574,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.yoke]]
 version = "0.8.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.yoke-derive]]
-version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.yoke-derive]]
